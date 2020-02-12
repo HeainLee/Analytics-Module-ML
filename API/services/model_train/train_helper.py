@@ -15,7 +15,9 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils.estimator_checks import check_estimators_dtypes
+from lightgbm.basic import LightGBMError
 
+from ..utils.custom_decorator import where_exception
 from ...config.result_path_config import PATH_CONFIG
 from ...models.algorithm import Algorithm
 from ...models.original_data import OriginalData
@@ -23,7 +25,6 @@ from ...models.preprocessed_data import PreprocessedData
 from ...serializers.serializers import ALGOSerializer
 from ...serializers.serializers import OriginalDataSerializer
 from ...serializers.serializers import PreprocessedDataSerializer
-from ..utils.custom_decorator import where_exception
 
 warnings.filterwarnings('ignore')
 logger = logging.getLogger('collect_log_helper')
@@ -62,83 +63,118 @@ class PrepareModelTrain:
             return None
 
     # 전처리된데이터를 로드하는 함수
-    def _load_preprocessed_data(self, file_name):
-        if os.path.splitext(file_name)[1] == '.csv':
-            try:
+    @staticmethod
+    def _load_preprocessed_data(file_name):
+        """
+        @type file_name: str
+        @type loaded_data: pandas.core.frame.DataFrame
+        @param file_name: file name (ex. 'P_1.json', 'P_2.csv')
+        @return: pandas DataFrame converted from json or csv file
+        """
+        try:
+            if os.path.splitext(file_name)[1] == '.csv':
                 file_path = os.path.join(PREPROCESSED_DATA_DIR, file_name)
-                get_csv_data = pd.read_csv(file_path)
-                return get_csv_data
-            except:
-                logger.warning('{} 파일이 존재하지 않습니다'.format(file_name))
-                return None
-
-        elif os.path.splitext(file_name)[1] == '.json':
-            try:
+                loaded_data = pd.read_csv(file_path)
+            elif os.path.splitext(file_name)[1] == '.json':
                 file_path = os.path.join(PREPROCESSED_DATA_DIR, file_name)
                 get_json_data = json.loads(open(file_path, 'r').read())
                 json_to_df = pd.DataFrame.from_dict(get_json_data, orient='index')
                 json_to_df.index = json_to_df.index.astype(int)
-                json_to_df = json_to_df.sort_index()
-                return json_to_df
-            except:
-                logger.warning('{} 파일이 존재하지 않습니다'.format(file_name))
-                return None
+                loaded_data = json_to_df.sort_index()
+            return loaded_data
+        except Exception as e:
+            where_exception(error_msg=e)
+            return None
 
     # 요청한 데이터의 변수 타입이 수치형인지 검사하는 함수
-    def _inspect_data(self, data_set):
-        for dtype in data_set.dtypes:
-            if dtype == 'object':
+    @staticmethod
+    def _inspect_data(data_set):
+        """
+        @type data_set: pandas.core.frame.DataFrame
+        @param data_set: pandas DataFrame for training
+        @return: Boolean(True/False)
+        """
+        for data_type in data_set.dtypes:
+            if data_type == 'object':
                 return False
             else:
                 return True
 
     # 모델을 로드해서 리턴하는 함수
-    def _get_estimator(self, params):
+    @staticmethod
+    def _get_estimator(params):
+        """
+        @type params: dict
+        @type loaded_estimator: object
+        @param params: ALGOSerializer(Algorithm.objects.get(pk=algo_id)).data
+        @return: original estimator class from python library
+        """
         module_ = __import__(params['LIBRARY_NAME'] +
-                             '.'+params['LIBRARY_OBJECT_NAME'])
+                             '.' + params['LIBRARY_OBJECT_NAME'])
         class_ = getattr(module_, params['LIBRARY_OBJECT_NAME'])
         clf_ = getattr(class_, params['LIBRARY_FUNCTION_NAME'])
-        clf = clf_()
-        return clf
+        loaded_estimator = clf_()
+        return loaded_estimator
 
     # 요청된 모델 조건에 맞게 파라미터 값 변경
-    def _change_params(self, model, param):
+    @staticmethod
+    def _change_params(model, param):
+        """
+        @type model: object
+        @type param: dict
+        @type model: object
+        @param model: training model
+        @param param: model parameters
+        @return: training model with changed model parameters
+                 or training model with default model parameters
+        """
         try:
             for k, v in param.items():
                 if not isinstance(v, str):
                     v = str(v)
                 v = v.lower()
-                logger.error('변경 요청한 파라미터 {} = {}'.format(k, v))
+                logger.warning('[Change Parameter] {} = {}'.format(k, v))
                 if '.' in v:
-                    if v.replace('.', '').isdigit(): # float인 경우
-                        v = float(v)                
+                    if v.replace('.', '').isdigit():  # float 인 경우
+                        v = float(v)
                         setattr(model, k, v)
                     else:
                         setattr(model, k, v)
-                elif v.isdigit(): # int인 경우
+                elif v.isdigit():  # int 인 경우
                     v = int(v)
                     setattr(model, k, v)
-                elif v.startswith('-'): # neg int인 경우
+                elif v.startswith('-'):  # neg int 인 경우
                     v = int(v)
                     setattr(model, k, v)
-                elif v == 'none': # None인 경우
+                elif v == 'none':  # None 인 경우
                     setattr(model, k, None)
-                elif v == 'true' or v == 'false': # boolen인 경우
+                elif v == 'true' or v == 'false':  # boolean 인 경우
                     v = bool(util.strtobool(v))
                     setattr(model, k, v)
-                elif v.startswith('{'): # dict인 경우
+                elif v.startswith('{'):  # dict 인 경우
                     v = literal_eval(v)
                     setattr(model, k, v)
                 else:
                     setattr(model, k, v)
             return model
         except Exception as e:
-            logger.error('Error Type = {} / Error Message = {}'.format(type(e), e))
+            where_exception(error_msg=e)
             return model
 
+
 class InspectUserRequest(PrepareModelTrain):
+    """
+    For inspecting Users' POST or PATCH request
+
+    """
 
     def __init__(self):
+        self.req_info_algorithm_seq_pk = None
+        self.req_info_train_data_id = None
+        self.req_info_train_data_type = None
+        self.req_info_model_param = None
+        self.req_info_train_param = None
+
         self.clf = None
         self.library_name = None
         self.function_usage = None
@@ -148,8 +184,28 @@ class InspectUserRequest(PrepareModelTrain):
         self.train_data_dict = None
         self.train_data_type = None
 
+    # 공통 에러 형식
+    @staticmethod
+    def _error_return_dict(error_type, error_msg):
+        """
+        @type error_type: str
+        @type error_msg: str
+        @param error_type: error type represented by '0000' or str
+        @param error_msg:  error message (str)
+        @return:
+        """
+        return dict(error_type=error_type, error_msg=error_msg)
+
     # 필수 파라미터 검사 (4101)
-    def _mandatory_key_exists_models_post(self, element):
+    @staticmethod
+    def _mandatory_key_exists_models_post(element):
+        """
+        @type element: dict
+        @type Boolean(True) or str
+        @param element: request_info (user request param(json) from django's views.py (request.data))
+        @return: True (if element is valid)
+                 key (if not)
+        """
         mand_key = ['algorithms_sequence_pk', 'train_data', 'train_parameters']
         for key in mand_key:
             if key not in element.keys():
@@ -164,12 +220,27 @@ class InspectUserRequest(PrepareModelTrain):
                     return key
         return True
 
-    # 요청한 알고리즘 ID와 데이터 ID가 있는지 검사 (4004)
+    # 요청한 알고리즘 ID와 데이터 ID가 있는지 검사 (Http404/4004)
     def _check_request_pk(self, algo_id, data_id, data_type):
-        if not int(algo_id) in list(Algorithm.objects.all().values_list(\
-            'ALGORITHM_SEQUENCE_PK', flat=True)):
-            # raise Http404
+        """
+        check algorithm and data primary key (valid DB)
+        if valid, save self.library_name, self.function_usage, self.clf,
+                  self.train_data_type, self.train_data_dict and self.train_data
+
+        @type algo_id: int
+        @type data_id: int
+        @type data_type: str
+        @param algo_id: algorithm's database saved id
+        @param data_id: data's database saved id (Original or Preprocessed)
+        @param data_type: data type (Original or Preprocessed)
+        @return: True (if all params are valid)
+                 False (if algo_id or data_id is not valid)
+                 self._error_return_dict ; dict (if data_path from data_id not valid)
+        """
+        if not int(algo_id) in list(Algorithm.objects.all().values_list( \
+                'ALGORITHM_SEQUENCE_PK', flat=True)):
             return False
+
         else:
             # USAGE 확인(regression, classification)
             user_request_algorithm = ALGOSerializer(
@@ -180,181 +251,226 @@ class InspectUserRequest(PrepareModelTrain):
 
         if data_type == 'original_data_sequence_pk':
             self.train_data_type = 'original'
-            if not int(data_id) in list(OriginalData.objects.all().values_list(\
-                'ORIGINAL_DATA_SEQUENCE_PK', flat=True)):
-                # raise Http404
+            if not int(data_id) in list(OriginalData.objects.all().values_list( \
+                    'ORIGINAL_DATA_SEQUENCE_PK', flat=True)):
                 return False
+
             else:
                 self.train_data_dict = OriginalDataSerializer(
                     OriginalData.objects.get(pk=data_id)).data
                 data_path = self.train_data_dict['FILEPATH']
                 if not os.path.isfile(data_path):
                     logger.error('{} 경로가 존재하지 않습니다'.format(data_path))
-                    return dict(error_type='4004', error_msg=data_path)
+                    # return dict(error_type='4004', error_msg=data_path)
+                    return self._error_return_dict('4004', data_path)
+
                 else:
                     self.train_data = super()._load_original_data(
                         file_name=os.path.split(data_path)[1])
 
         elif data_type == 'preprocessed_data_sequence_pk':
             self.train_data_type = 'preprocessed'
-            if not int(data_id) in list(PreprocessedData.objects.all().values_list(\
-                'PREPROCESSED_DATA_SEQUENCE_PK', flat=True)):
-                # raise Http404
+            if not int(data_id) in list(PreprocessedData.objects.all().values_list( \
+                    'PREPROCESSED_DATA_SEQUENCE_PK', flat=True)):
                 return False
+
             else:
                 self.train_data_dict = PreprocessedDataSerializer(
                     PreprocessedData.objects.get(pk=data_id)).data
                 data_path = self.train_data_dict['FILEPATH']
                 if not os.path.isfile(data_path):
                     logger.error('{} 경로가 존재하지 않습니다'.format(data_path))
-                    return dict(error_type='4004', error_msg=data_path)
+                    # return dict(error_type='4004', error_msg=data_path)
+                    return self._error_return_dict('4004', data_path)
+
                 else:
                     self.train_data = super()._load_preprocessed_data(
                         file_name=os.path.split(data_path)[1])
         return True
-    
+
     # model_parameters 검사 (4012/4000)
     # 예) {"max_features": "log2", "min_samples_split":3}
     def _check_model_parameters(self, model_param_dict):
-        if model_param_dict: # model_parameters가 있는 경우
+        """
+        check model_param_dict is valid
+        to check model_param_dict being applied with self.clf call _change_param func
+        if valid, save self.model_param
+
+        @type model_param_dict: dict or False
+        @param model_param_dict: user request 'model_parameter' (request_info['model_parameters'])
+        @return: True (if model_param_dict is valid)
+                 self._error_return_dict ; dict (if     )
+        """
+        self.model_param = self.clf.get_params()
+
+        if model_param_dict:  # model_parameters 가 있는 경우
             model_param_list = list(model_param_dict.keys())
+            self.model_param.update(model_param_dict)
             logger.info('사용자가 변경을 요청한 모델 파라미터 {}'.format(model_param_list))
+
             for name in model_param_list:
                 if not hasattr(self.clf, name):
                     logger.error('{}는 요청 가능한 모델 파라미터가 아닙니다'.format(name))
-                    return dict(error_type='4102', error_msg=name)
-            self.model_param = self.clf.get_params()
-            self.model_param.update(model_param_dict)
-            for k, v in self.model_param.items():
-                if isinstance(v, bool) or isinstance(v, type(None)):
-                    self.model_param[k] = str(v)
+                    return self._error_return_dict('4102', name)
 
             try:
                 self.clf = super()._change_params(model=self.clf, param=model_param_dict)
-                logger.info('모델 파라미터 적용 결과 {}'.format(self.clf.get_params()))
                 check_estimators_dtypes(name=type(self.clf).__name__, estimator_orig=self.clf)
+                # logger.info('모델 파라미터 적용 결과 {}'.format(self.clf.get_params()))
+
+            except ValueError as e:
+                where_exception(error_msg=e)
+                return self._error_return_dict('model_param_error', str(e))
+
+            except LightGBMError as e:
+                where_exception(error_msg=e)
+                return self._error_return_dict('model_param_error', str(e))
+
             except Exception as e:
-                logger.error('모델 파라미터 에러 발생 {}'.format(e))
-                return 'model_param_error'
-                         
-        else: # model_parameters가 없는 경우
-            self.model_param = self.clf.get_params()
-            for k, v in self.model_param.items():
-                if isinstance(v, bool) or isinstance(v, type(None)):
-                    self.model_param[k] = str(v)
+                where_exception(error_msg=e)
+                return self._error_return_dict('model_param_error', str(e))
+
+        else:  # model_parameters 가 없는 경우
             logger.info('모델 파라미터를 요청하지 않았으므로, 모델의 기본 파라미터가 적용됩니다')
+            # self.model_param = self.clf.get_params()
+
+        for k, v in self.model_param.items():
+            if isinstance(v, bool) or isinstance(v, type(None)):
+                self.model_param[k] = str(v)
         return True
 
     # train_parameters 검사 (4101, 4102)
     # 예)  "y": "target"
     def _check_train_parameters(self, train_param_dict):
-        if train_param_dict: # train_parameters가 있는 경우
-            train_param_list = list(train_param_dict.keys())
-            logger.info('사용자가 요청한 학습 파라미터 {}'.format(train_param_list))
-            for name in train_param_list:
-                if name not in inspect.getfullargspec(self.clf.fit).args:
-                    logger.error('{}는 요청 가능한 학습 파라미터가 아닙니다'.format(name))
-                    return dict(error_type='4102', error_msg=name)
+        """
+        check train_param_dict is valid
+        if valid, save self.train_param
 
-            # 지도학습에서 train_parameter에 y 값이 있는지 검사 (4101)
-            if self.library_name == 'sklearn' and \
-             (self.function_usage == 'regression' or 'classification'):
-                if 'y' not in train_param_list:
-                    logger.error('지도학습에서 y 학습 파라미터는 필수입니다')
-                    return dict(error_type='4101', error_msg='y')
+        @type train_param_dict: dict
+        @param train_param_dict: user request 'train_parameter' (request_info['train_parameters'])
+        @return: True (if train_param_dict is valid)
+                 self._error_return_dict ; dict (if    )
+        """
+        # if train_param_dict:  # train_parameters 가 있는 경우
+        train_param_list = list(train_param_dict.keys())
+        logger.info('사용자가 요청한 학습 파라미터 {}'.format(train_param_list))
+        for name in train_param_list:
+            if name not in inspect.getfullargspec(self.clf.fit).args:
+                logger.error('{}는 요청 가능한 학습 파라미터가 아닙니다'.format(name))
+                return self._error_return_dict('4102', name)
 
-            # 지도학습에서 요청한 train_parameter의 y값이 유휴한 값인지 검사 (4102)
-            if train_param_dict['y'] not in self.train_data.columns:
-                logger.error('{}는 유효한 값이 아닙니다'.format(train_param_dict['y']))
-                return dict(error_type='4102', error_msg=train_param_dict['y'])
+        # 지도학습에서 train_parameter 에 y 값이 있는지 검사 (4101)
+        if (self.library_name == 'sklearn' or 'lightgbm') and \
+                (self.function_usage == 'regression' or 'classification'):
+            if 'y' not in train_param_list:
+                logger.error('지도학습에서 y 학습 파라미터는 필수입니다')
+                return self._error_return_dict('4101', 'y')
 
-            self.train_param = {} # Command필드에 저정한 train_parameters정보 생성
-            for k, v in inspect.signature(self.clf.fit).parameters.items():
-                if v.default is not inspect.Parameter.empty:
-                    self.train_param[k] = v.default
+        # 지도학습에서 요청한 train_parameter 의 y 값이 유휴한 값인지 검사 (4102)
+        if train_param_dict['y'] not in self.train_data.columns:
+            logger.error('{}는 유효한 값이 아닙니다'.format(train_param_dict['y']))
+            return self._error_return_dict('4102', train_param_dict['y'])
+
+        self.train_param = {}  # Command 필드에 저정할 train_parameters 정보 생성
+        for k, v in inspect.signature(self.clf.fit).parameters.items():
+            if v.default is not inspect.Parameter.empty:
+                self.train_param[k] = v.default
+            else:
+                if k == 'X':
+                    except_value = train_param_dict['y']
+                    train_data_columns = list(self.train_data.columns)
+                    train_data_columns.remove(except_value)
+                    self.train_param[k] = train_data_columns
                 else:
-                    if k == 'X':
-                        except_value = train_param_dict['y']
-                        train_data_columns = list(self.train_data.columns)
-                        train_data_columns.remove(except_value)
-                        self.train_param[k] = train_data_columns
-                    else:
-                        self.train_param[k] = None
-            self.train_param.update(train_param_dict)
-            for k, v in self.train_param.items():
-                if isinstance(v, bool) or isinstance(v, type(None)):
-                    self.train_param[k] = str(v)
+                    self.train_param[k] = None
+
+        self.train_param.update(train_param_dict)
+        for k, v in self.train_param.items():
+            if isinstance(v, bool) or isinstance(v, type(None)):
+                self.train_param[k] = str(v)
         return True
 
     # 모델 학습 요청에 대한 요청 파라미터 검사하는 함수
     def check_request_body_models_post(self, request_info, pk):
-        logger.info('요청 ID [{}]의 필수 파라미터를 검사...'\
-            .format(pk))
+        """
+        @type request_info: dict
+        @type pk: int
+        @param request_info: user request param(json) from django's views.py (request.data)
+        @param pk: TrainInfo.objects.latest('MODEL_SEQUENCE_PK').pk + 1
+        @return: True (if request_info is valid)
+                 self._error_return_dict ; dict (if not)
+        """
+
+        logger.info('Model Train Request ID [{}] - Check Request Info'.format(pk))
+
         # 필수 파라미터 검사 (4101)
         is_keys = self._mandatory_key_exists_models_post(element=request_info)
-        if is_keys != True:
-            return dict(error_type='4101', error_msg=is_keys)
+        if not is_keys:  # mandatory key name (str)
+            return self._error_return_dict('4101', is_keys)
 
-        logger.info('요청 ID [{}]의 요청 알고리즘 및 데이터 유효성 검사...'\
-            .format(pk))
-        # 요청한 알고리즘 ID와 데이터 ID가 있는지 검사 (4004)
-        algorithm_id = request_info['algorithms_sequence_pk']
-        train_data_type = list(request_info['train_data'].keys())[0]
-        train_data_id = list(request_info['train_data'].values())[0]
+        self.req_info_algorithm_seq_pk = request_info['algorithms_sequence_pk']
+        self.req_info_train_data_id = list(request_info['train_data'].values())[0]
+        self.req_info_train_data_type = list(request_info['train_data'].keys())[0]
+        self.req_info_model_param = request_info['model_parameters'] if \
+            'model_parameters' in list(request_info.keys()) else False
+        self.req_info_train_param = request_info['train_parameters']
+
+        # 요청한 알고리즘 ID와 데이터 ID가 있는지 검사 (Http404/4004)
         is_valid = self._check_request_pk(
-            algo_id=algorithm_id, data_id=train_data_id, data_type=train_data_type)
+            algo_id=self.req_info_algorithm_seq_pk,
+            data_id=self.req_info_train_data_id,
+            data_type=self.req_info_train_data_type)
+
         if is_valid != True:
             if isinstance(is_valid, dict) and is_valid['error_type'] == '4004':
-                return dict(error_type='4004', error_msg=is_valid['error_msg']) # file_not_found
+                return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
+                # file_not_found
             else:
-                raise Http404 # algorithm 또는 data ID가 없는 경우 -- resource_not_found
-        
-        logger.info('요청 ID [{}]의 [model_parameters] 파라미터 검사...'\
-            .format(pk))
+                raise Http404
+                # algorithm 또는 data ID가 없는 경우 -- resource_not_found
+
         # model_parameters 검사 (4012/4013)
-        get_model_param = request_info['model_parameters'] if \
-        'model_parameters' in list(request_info.keys()) else False
-        is_valid = self._check_model_parameters(
-            model_param_dict=get_model_param)
+        is_valid = self._check_model_parameters(model_param_dict=self.req_info_model_param)
+
         if is_valid != True:
             if isinstance(is_valid, dict) and is_valid['error_type'] == '4102':
-                return dict(error_type=is_valid['error_type'], error_msg=is_valid['error_msg'])
-            elif isinstance(is_valid, str) and is_valid == 'model_param_error':
-                return dict(error_type='4103', error_msg=is_valid)
+                return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
+                # invalid model parameter name
 
-        logger.info('요청 ID [{}]의 [train_parameters] 파라미터를 검사...'\
-            .format(pk))
-        # train_parameters 검사 (4101, 4102)
-        get_train_param = request_info['train_parameters']
+            elif isinstance(is_valid, dict) and is_valid['error_type'] == 'model_param_error':
+                return self._error_return_dict('4103', is_valid)
+                # invalid model parmeter values (특정할 수 없는 에러..)
 
-        is_valid = self._check_train_parameters(
-            train_param_dict=get_train_param)
+        # train_parameters 검사 (4101/4102)
+        is_valid = self._check_train_parameters(train_param_dict=self.req_info_train_param)
+
         if is_valid != True:
-            return dict(error_type=is_valid['error_type'], 
-                error_msg=is_valid['error_msg'])
-                
+            return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
+            # invalid train parameter name 또는 'y' not found
+
         # 요청한 데이터의 변수 타입이 수치형인지 검사 (4022)
-        # 나중에 model 학습 부분에서의 에러 발생에 대비한 검사 항목이며, 언제든 변경될 수 있음
         if not super()._inspect_data(data_set=self.train_data):
-            logger.error('학습 또는 적용 데이터 타입은 numerical이어야 합니다')
-            return dict(error_type='4022', 
-                error_msg='Data is not suitable for the algorithm')
+            logger.error("Train Data's dtype must be numeric not object")
+            return self._error_return_dict('4022', error_msg='Data is not suitable for the algorithm')
         return True
 
     # 모델 중지/재시작/테스트 요청 필수 파라미터 검사하는 함수
     def check_patch_mode(self, request_info):
-        valid_patch_mode = ['STOP', 'TEST', 'RESTART'] # 'LOAD', 'UNLOAD' 
-        # 필수 body parameters인 mode를 요청하지 않은 경우
+        valid_patch_mode = ['STOP', 'TEST', 'RESTART']  # 'LOAD', 'UNLOAD'
+        # 필수 body parameters 인 mode 를 요청하지 않은 경우
         if 'mode' not in request_info.keys():
-            return dict(error_type='4101', error_msg='mode')
-        # mode가 valid_patch_mode가 아닌 경우
+            return self._error_return_dict('4101', 'mode')
+
+        # mode 가 valid_patch_mode 가 아닌 경우
         if request_info['mode'] not in valid_patch_mode:
-            return dict(error_type='4102', error_msg=request_info['mode'])
-        # mode가 TEST인데 test_data_path를 요청하지 않은 경우
+            return self._error_return_dict('4102', request_info['mode'])
+
+        # mode 가 TEST 인데 test_data_path 를 요청하지 않은 경우
         if request_info['mode'] == 'TEST':
             if 'test_data_path' not in request_info.keys():
-                return dict(error_type='4101', error_msg='test_data_path')
-            # test_parameters(target, test_type)를 요청하지 않은 경우 
+                return self._error_return_dict('4101', 'test_data_path')
+
+            # test_parameters(target, test_type) 를 요청하지 않은 경우
             # if 'test_parameters' not in request_info.keys():
             #     return dict(error_type='4101', error_msg='test_parameters')
             # if 'target' not in request_info['test_parameters'].keys():
@@ -363,40 +479,57 @@ class InspectUserRequest(PrepareModelTrain):
 
 
 class SklearnTrainTask(PrepareModelTrain):
+    """
+    For executing Scikit-learn Machine Learning Model Train
 
-    def _evaluate_cv5(self, estimator, data_set, target_value):
+    """
+
+    @staticmethod
+    def _train_sklearn_model(estimator, data_set, target_value):
         x_data = data_set.drop([target_value], axis=1)
         y_data = data_set[target_value]
-        kfold = KFold(n_splits=5, shuffle=True, random_state=2019)
-        cv_scores = cross_val_score(estimator, X=x_data, y=y_data, cv=kfold)
-        # cv_scores.means()
-        return list(cv_scores)
-
-    def _evaluate_holdout(self, estimator, data_set, target_value):
-        x_data = data_set.drop([target_value], axis=1)
-        y_data = data_set[target_value]
-        x_train, x_test, y_train, y_test = train_test_split(
-            x_data, y_data, test_size=0.3, random_state=2019)
-        clf = estimator.fit(X=x_train, y=y_train)
-        y_pred = clf.predict(X=x_test)
-        holdout_score = clf.score(x_test, y_test)
-        return holdout_score
-
-    def _train_final_model(self, estimator, data_set, target_value):
-        x_data = data_set.drop([target_value], axis=1)
         train_columns = list(x_data.columns.values)
-        y_data = data_set[target_value]
+        clf = copy.deepcopy(estimator)
+
+        # 교차검증
+        kfold = KFold(n_splits=5, shuffle=True, random_state=2019)
+        cv_scores = cross_val_score(clf, X=x_data, y=y_data, cv=kfold)
+        cv_scores = np.around(cv_scores, 8).tolist()
+
+        # 홀드아웃 검증
+        x_train, x_valid, y_train, y_valid = train_test_split(
+            x_data, y_data, test_size=0.3, random_state=2019)
+        clf_ = clf.fit(X=x_train, y=y_train)
+        holdout_score = np.around(clf_.score(x_valid, y_valid), 8)
+
+        # Final Model
         final_model = estimator.fit(X=x_data, y=y_data)
-        return final_model, train_columns
+        return final_model, train_columns, cv_scores, holdout_score
 
-    def _save_estimator(self, estimator, estimator_name):
-        file_path = os.path.join(MODEL_DIR, estimator_name)
+    @staticmethod
+    def _train_lightgbm_model(estimator, data_set, target_value):
+        x_data = data_set.drop([target_value], axis=1)
+        y_data = data_set[target_value]
+        train_columns = list(x_data.columns.values)
+        # 홀드아웃 검증 + Final Model
+        x_train, x_valid, y_train, y_valid = train_test_split(
+            x_data, y_data, test_size=0.3, random_state=2020)
+        final_model = estimator.fit(X=x_train, y=y_train,
+                                    eval_set=[(x_valid, y_valid)],
+                                    early_stopping_rounds=5,
+                                    eval_metric=None, verbose=10)
+        holdout_score = np.around(estimator.score(x_valid, y_valid), 8)
+        return final_model, train_columns, holdout_score
+
+    @staticmethod
+    def _save_estimator(estimator, saved_name):
+        file_path = os.path.join(MODEL_DIR, saved_name)
         joblib.dump(estimator, file_path)
-        return file_path, estimator_name
+        return file_path, saved_name
 
-    # RESTART모드에서 command 검사 
+    # RESTART모드에서 command 검사
     def check_params(self, params_dict):
-        valid_params = {}        
+        valid_params = {}
         for param_key, param_value in params_dict.items():
             if isinstance(param_value, str):
                 param_value = param_value.lower()
@@ -411,51 +544,60 @@ class SklearnTrainTask(PrepareModelTrain):
         if 'preprocessed_data' in data_path:
             data = super()._load_preprocessed_data(
                 file_name=os.path.split(data_path)[1])
+
         elif 'original_data' in data_path:
             data = super()._load_original_data(
                 file_name=os.path.split(data_path)[1])
         logger.info('[{}] 경로에서 학습 데이터를 로드했습니다'.format(data_path))
 
-        # 학습에 사용될 알고리즘 import해서 불러오기
+        # 학습에 사용될 알고리즘 불러오기
         algo = ALGOSerializer(Algorithm.objects.get(pk=algo_pk)).data
         clf = super()._get_estimator(params=algo)
         model_name = type(clf).__name__
 
         # 사용자 요청에 따라 모델 파라미터 변경
-        logger.error('모델 파라미터 {}'.format(model_param))
-        if not model_param == None:
+        if model_param is not None:
             clf = super()._change_params(model=clf, param=model_param)
-        logger.info('요청 ID [{}]의 학습 모델 = {}'.format(pk, clf))
-        if base.is_regressor(clf) == True or base.is_classifier(clf) == True:
-            logger.info('요청 ID [{}]에 의해 모델 [{}]의 교차검증을 수행합니다'\
-                .format(pk, model_name))
-            cv_score = self._evaluate_cv5(
-                estimator=clf, data_set=data, target_value=train_param['y'])
-            logger.info('요청 ID [{}]에 의해 모델 [{}]의 홀드아웃 검증을 수행합니다'\
-                .format(pk, model_name))
-            holdout_score = self._evaluate_holdout(
-                estimator=clf, data_set=data, target_value=train_param['y'])
-            logger.info('요청 ID [{}]에 의해 모델 [{}]의 최종모델을 학습합니다'\
-                .format(pk, model_name))
-            final_model, train_columns = self._train_final_model(
-                estimator=clf, data_set=data, target_value=train_param['y'])
+
+        if 'LGBM' in model_name:  # LightGBM 알고리즘
+            final_model, train_columns, holdout_score = \
+                self._train_lightgbm_model(
+                    estimator=clf, data_set=data, target_value=train_param['y'])
+
             file_path, file_name = self._save_estimator(
-                estimator=final_model, estimator_name='M_{}.pickle'.format(pk))
-        logger.info('요청 ID [{}]의 학습된 모델 저장 => M_{}.pickle'.format(pk, pk))
+                estimator=final_model, saved_name='M_{}.pickle'.format(pk))
+            logger.info('요청 ID [{}]의 학습된 모델 저장 => M_{}.pickle'.format(pk, pk))
 
-        model_info = dict(
-            model_name=algo['ALGORITHM_NAME'], 
-            model_param=clf.get_params(), 
-            model_train_columns=train_columns)
-        validation_info = dict(
-            validation_score=cv_score, 
-            holdout_score=holdout_score)
-
-        final_result = dict(
-            file_path=file_path, 
-            file_name=file_name, 
-            model_info=model_info, 
-            validation_info=validation_info
+            lgbm_train_param = dict(early_stopping_rounds=5,
+                                    eval_metric='default',
+                                    validation_data_rate=0.3)
+            final_result = dict(
+                file_path=file_path,
+                file_name=file_name,
+                model_info=dict(model_name=algo['ALGORITHM_NAME'],
+                                model_param=clf.get_params(),
+                                model_train_columns=train_columns,
+                                train_param=lgbm_train_param),
+                validation_info=dict(holdout_score=holdout_score)
             )
 
+        else:  # 사이킷런 알고리즘
+            if base.is_regressor(clf) == True or base.is_classifier(clf) == True:
+                final_model, train_columns, cv_score, holdout_score = \
+                    self._train_sklearn_model(
+                        estimator=clf, data_set=data, target_value=train_param['y'])
+
+                file_path, file_name = self._save_estimator(
+                    estimator=final_model, saved_name='M_{}.pickle'.format(pk))
+            logger.info('요청 ID [{}]의 학습된 모델 저장 => M_{}.pickle'.format(pk, pk))
+
+            final_result = dict(
+                file_path=file_path,
+                file_name=file_name,
+                model_info=dict(model_name=algo['ALGORITHM_NAME'],
+                                model_param=clf.get_params(),
+                                model_train_columns=train_columns),
+                validation_info=dict(cv_score=cv_score,
+                                     holdout_score=holdout_score)
+            )
         return final_result

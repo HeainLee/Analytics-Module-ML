@@ -11,12 +11,14 @@ try:
 except AttributeError:
     current_process()._config = {'semprefix': '/mp'}
 
+import os, sys
 import logging
 import datetime
 from celery import shared_task
 from smartcity.celery import app
 
 from .train_helper import SklearnTrainTask
+from ..utils.custom_decorator import where_exception
 from ...models.train_info import TrainInfo
 from ...serializers.serializers import TrainModelSerializer
 
@@ -29,31 +31,31 @@ def model_train(self, train_info=None, data_saved_path=None, pk=None, mode=None)
     back_job = model_train_result(
         train_info=train_info, data_saved_path=data_saved_path, pk=pk, mode=mode)
     train_info = TrainInfo.objects.get(pk=pk)
-    train_infomation = {}
+    train_information = {}
 
-    if back_job == False:
-        train_infomation['PROGRESS_STATE'] = 'fail'
-        train_infomation['PROGRESS_END_DATETIME'] = datetime.datetime.now()
+    if not back_job:
+        train_information['PROGRESS_STATE'] = 'fail'
+        train_information['PROGRESS_END_DATETIME'] = datetime.datetime.now()
         logger.error('요청 ID [{}]의 모델 학습이 실패했습니다'.format(pk))
-        serializer = TrainModelSerializer(train_info, data=train_infomation, partial=True)
+        serializer = TrainModelSerializer(train_info, data=train_information, partial=True)
 
     else:
-        train_infomation['FILEPATH'] = str(back_job['file_path'])
-        train_infomation['FILENAME'] = str(back_job['file_name'])
-        train_infomation['TRAIN_SUMMARY'] = str(back_job['model_info'])
-        train_infomation['VALIDATION_SUMMARY'] = str(back_job['validation_info'])
-        train_infomation['PROGRESS_STATE'] = 'success'
-        train_infomation['LOAD_STATE'] = 'load_available'
-        train_infomation['PROGRESS_END_DATETIME'] = datetime.datetime.now()
+        train_information['FILEPATH'] = str(back_job['file_path'])
+        train_information['FILENAME'] = str(back_job['file_name'])
+        train_information['TRAIN_SUMMARY'] = str(back_job['model_info'])
+        train_information['VALIDATION_SUMMARY'] = str(back_job['validation_info'])
+        train_information['PROGRESS_STATE'] = 'success'
+        train_information['LOAD_STATE'] = 'load_available'
+        train_information['PROGRESS_END_DATETIME'] = datetime.datetime.now()
         logger.info('요청 ID [{}]의 모델 학습이 완료되었습니다'.format(pk))
         serializer = TrainModelSerializer(
-            train_info, data=train_infomation, partial=True)
+            train_info, data=train_information, partial=True)
     if serializer.is_valid():
         serializer.save()
         return 'async_task_finished'
     else:
         logger.info('요청 ID [{}]의 모델 저장이 실패했습니다 [모델 학습 정보] = {}' \
-                    .format(pk, train_infomation))
+                    .format(pk, train_information))
         return 'save_failed'
 
 
@@ -83,6 +85,5 @@ def model_train_result(train_info=None, data_saved_path=None, pk=None, mode=None
         return sklearn_result
 
     except Exception as e:
-        logger.error('Error Type = {} / Error Message = {}'.format(type(e), e))
+        where_exception(error_msg=e)
         return False
-        

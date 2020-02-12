@@ -24,7 +24,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = '*s(w5a^7&ddnxyf1evre0v-9pv4=&9g0w!n=%uz5ec^1n55tko'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
@@ -78,10 +78,10 @@ WSGI_APPLICATION = 'smartcity.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'ANALYTICS_MODULE',
-        'USER': 'smartcity',
-        'PASSWORD': 'smartcity',
+        'ENGINE': 'django.db.backends.postgresql', #'django.db.backends.sqlite3'
+        'NAME': 'conda_django_db_new', #os.path.join(BASE_DIR, 'db.sqlite3')
+        'USER': 'conda_django_db_manager',
+        'PASSWORD': 'daum123',
         'HOST': 'localhost',
         'PORT': '5432',
     }
@@ -193,6 +193,7 @@ LOGGING = {
         },
         'collect_log_view': {'level':'DEBUG', 'handlers': ['sub_console', 'file']},
         'collect_log_helper': {'level':'DEBUG', 'handlers': ['sub_console', 'file'], 'propagate':0},
-        'collect_log_task': {'level':'DEBUG', 'handlers': ['file'], 'propagate':0}
+        'collect_log_task': {'level':'DEBUG', 'handlers': ['file'], 'propagate':0},
+        'collect_log_utils': {'level': 'DEBUG', 'handlers': ['sub_console'], 'propagate': 0},
     }
 }
