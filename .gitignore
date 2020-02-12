@@ -1,0 +1,15 @@
+*.pyc
+*~
+__pycache__
+myvenv
+db.sqlite3
+/static
+.DS_Store
+/tmp_files
+/data_folder
+/API/migrations
+.idea
+/smartcity/settings.py
+/smartcity/wsgi.py
+/manage.py
+
