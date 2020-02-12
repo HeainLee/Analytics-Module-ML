@@ -13,3 +13,5 @@ db.sqlite3
 /smartcity/wsgi.py
 /manage.py
 
+/result
+
