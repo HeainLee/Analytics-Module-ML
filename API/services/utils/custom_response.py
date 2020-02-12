@@ -54,7 +54,7 @@ ERROR_CASE_13 = dict(ERROR_CASE_13='NOT INITIATED RESOURCE(HTTP_451_Unavailable 
 ############### unseen 컬럼이 있는 경우 (모델적용)
 # ERROR_CASE_11. 모델 생성 요청시 model_parameters로 전달한 값으로 모델 파라미터를 변경할 수 없는 경우(4103)
 # ERROR_CASE_12. 전처리 테스트 도중 발생하는 에러(4104)
-# ERROR_CASE_13. 초기화 되지 않아서 정삭작동하지 않는 경우(4051)
+# ERROR_CASE_13. 초기화 되지 않아서 정상작동하지 않는 경우(4051)
 '''
 
 logger = logging.getLogger('collect_log_view')
@@ -170,9 +170,9 @@ class CustomErrorCode:
 
     def INVALID_MODEL_PARAMETER_4103(self, error_msg):
         logger.error('{}'.format(ERROR_CASE_11))
-        if error_msg == 'model_param_error':
+        if isinstance(error_msg, dict) and error_msg['error_type'] == 'model_param_error':
             response = {'type': '4103', 'title': 'Invalid Model Parameter',
-                        'detail': "'model_parameters' is not valid. Check again requested model parameter values"}
+                        'detail': str(error_msg['error_msg'])}
             return response
 
     def INVALID_PREPROCESS_CONDITION_4104(self, error_msg):
