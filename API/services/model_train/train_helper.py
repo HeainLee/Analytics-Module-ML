@@ -1,9 +1,11 @@
 import os
 import json
+import copy
 import joblib
 import inspect
 import logging
 import warnings
+import numpy as np
 import pandas as pd
 from distutils import util
 from ast import literal_eval
@@ -21,42 +23,49 @@ from ...models.preprocessed_data import PreprocessedData
 from ...serializers.serializers import ALGOSerializer
 from ...serializers.serializers import OriginalDataSerializer
 from ...serializers.serializers import PreprocessedDataSerializer
+from ..utils.custom_decorator import where_exception
 
 warnings.filterwarnings('ignore')
 logger = logging.getLogger('collect_log_helper')
 
 ORIGINAL_DATA_DIR = PATH_CONFIG.ORIGINAL_DATA_DIRECTORY  # 'result/original_data'
-PREPROCEESED_DATA_DIR = PATH_CONFIG.PREPROCESSED_DATA  # 'result/preprocessed_data'
+PREPROCESSED_DATA_DIR = PATH_CONFIG.PREPROCESSED_DATA  # 'result/preprocessed_data'
 MODEL_DIR = PATH_CONFIG.MODEL  # 'result/model'
 
 
 class PrepareModelTrain:
-    # 원본데이터를 로드하는 함수
-    def _load_original_data(self, file_name):
-        if os.path.splitext(file_name)[1] == '.csv':
-            try:
-                file_path = os.path.join(ORIGINAL_DATA_DIR, file_name)
-                get_csv_data = pd.read_csv(file_path)
-                return get_csv_data
-            except:
-                logger.warning('{} 파일이 존재하지 않습니다'.format(file_name))
-                return None
+    """
+    For preparing data, inspect data, get estimator, change parameters
 
-        elif os.path.splitext(file_name)[1] == '.json':
-            try:
+    """
+
+    # 원본데이터를 로드하는 함수
+    @staticmethod
+    def _load_original_data(file_name):
+        """
+        @type file_name: str
+        @type loaded_data: pandas.core.frame.DataFrame
+        @param file_name: file name (ex. 'O_1.json', 'O_2.csv')
+        @return: pandas DataFrame converted from json or csv file
+        """
+        try:
+            if os.path.splitext(file_name)[1] == '.csv':
                 file_path = os.path.join(ORIGINAL_DATA_DIR, file_name)
-                # 데이터 저장 형태 : seperate by enter {column: value,column: value,..}
-                json_to_df = pd.read_json(file_path, lines=True, encoding='utf-8')
-                return json_to_df
-            except:
-                logger.warning('{} 파일이 존재하지 않습니다'.format(file_name))
-                return None
+                loaded_data = pd.read_csv(file_path)
+            elif os.path.splitext(file_name)[1] == '.json':
+                file_path = os.path.join(ORIGINAL_DATA_DIR, file_name)
+                # 데이터 저장 형태 : separated by enter {column: value,column: value,..}
+                loaded_data = pd.read_json(file_path, lines=True, encoding='utf-8')
+            return loaded_data
+        except Exception as e:
+            where_exception(error_msg=e)
+            return None
 
     # 전처리된데이터를 로드하는 함수
     def _load_preprocessed_data(self, file_name):
         if os.path.splitext(file_name)[1] == '.csv':
             try:
-                file_path = os.path.join(PREPROCEESED_DATA_DIR, file_name)
+                file_path = os.path.join(PREPROCESSED_DATA_DIR, file_name)
                 get_csv_data = pd.read_csv(file_path)
                 return get_csv_data
             except:
@@ -65,7 +74,7 @@ class PrepareModelTrain:
 
         elif os.path.splitext(file_name)[1] == '.json':
             try:
-                file_path = os.path.join(PREPROCEESED_DATA_DIR, file_name)
+                file_path = os.path.join(PREPROCESSED_DATA_DIR, file_name)
                 get_json_data = json.loads(open(file_path, 'r').read())
                 json_to_df = pd.DataFrame.from_dict(get_json_data, orient='index')
                 json_to_df.index = json_to_df.index.astype(int)
