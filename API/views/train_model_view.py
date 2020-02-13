@@ -161,18 +161,20 @@ class TrainModelDetailView(APIView):
             P_pk = get_command['train_data']['preprocessed_data_sequence_pk']
             P_serializer = PreprocessedDataSerializer(
                 PreprocessedData.objects.get(pk=P_pk)).data
-            O_pk = P_serializer['ORIGINAL_DATA_SEQUENCE_FK1']
             data_saved_path = P_serializer['FILEPATH']
 
             result = tasks.model_train.apply_async(
                 args=[get_command, data_saved_path, pk, 'restart'])
             logger.info('요청 ID [{}]의 모델 학습을 재시작합니다'.format(pk))
             change_info = dict(
+                FILEPATH="", FILENAME="", TRAIN_SUMMARY="",
+                VALIDATION_SUMMARY="", LOAD_STATE="model_not_found",
                 PROGRESS_STATE='ongoing', JOB_ID=result.id,
                 PROGRESS_START_DATETIME=datetime.datetime.now(),
-                PROGRESS_END_DATETIME=None)
-            serializer = TrainModelSerializer(
-                train_info, data=change_info, partial=True)
+                PROGRESS_END_DATETIME=None
+            )
+            serializer = TrainModelSerializer(train_info, data=change_info, partial=True)
+
             if serializer.is_valid():
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
