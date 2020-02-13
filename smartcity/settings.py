@@ -194,6 +194,6 @@ LOGGING = {
         'collect_log_view': {'level':'DEBUG', 'handlers': ['sub_console', 'file']},
         'collect_log_helper': {'level':'DEBUG', 'handlers': ['sub_console', 'file'], 'propagate':0},
         'collect_log_task': {'level':'DEBUG', 'handlers': ['file'], 'propagate':0},
-        'collect_log_utils': {'level': 'DEBUG', 'handlers': ['sub_console'], 'propagate': 0},
+        'collect_log_utils': {'level': 'DEBUG', 'handlers': ['sub_console', 'file'], 'propagate': 0},
     }
 }

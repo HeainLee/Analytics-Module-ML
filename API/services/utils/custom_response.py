@@ -57,7 +57,7 @@ ERROR_CASE_13 = dict(ERROR_CASE_13='NOT INITIATED RESOURCE(HTTP_451_Unavailable 
 # ERROR_CASE_13. 초기화 되지 않아서 정상작동하지 않는 경우(4051)
 '''
 
-logger = logging.getLogger('collect_log_view')
+logger = logging.getLogger('collect_log_utils')
 
 @api_view()
 def custom404(request, exception):
