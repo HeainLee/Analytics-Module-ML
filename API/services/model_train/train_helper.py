@@ -405,7 +405,7 @@ class InspectUserRequest(PrepareModelTrain):
 
         # 필수 파라미터 검사 (4101)
         is_keys = self._mandatory_key_exists_models_post(element=request_info)
-        if not is_keys:  # mandatory key name (str)
+        if is_keys != True:  # mandatory key name (str)
             return self._error_return_dict('4101', is_keys)
 
         self.req_info_algorithm_seq_pk = request_info['algorithms_sequence_pk']
