@@ -320,15 +320,15 @@ class InspectUserRequest(PrepareModelTrain):
 
             except ValueError as e:
                 where_exception(error_msg=e)
-                return self._error_return_dict('model_param_error', str(e))
+                return self._error_return_dict('4103', str(e))
 
             except LightGBMError as e:
                 where_exception(error_msg=e)
-                return self._error_return_dict('model_param_error', str(e))
+                return self._error_return_dict('4103', str(e))
 
             except Exception as e:
                 where_exception(error_msg=e)
-                return self._error_return_dict('model_param_error', str(e))
+                return self._error_return_dict('4103', str(e))
 
         else:  # model_parameters 가 없는 경우
             logger.info('모델 파라미터를 요청하지 않았으므로, 모델의 기본 파라미터가 적용됩니다')
@@ -405,7 +405,7 @@ class InspectUserRequest(PrepareModelTrain):
 
         # 필수 파라미터 검사 (4101)
         is_keys = self._mandatory_key_exists_models_post(element=request_info)
-        if is_keys != True:  # mandatory key name (str)
+        if isinstance(is_keys, str):  # mandatory key name (str)
             return self._error_return_dict('4101', is_keys)
 
         self.req_info_algorithm_seq_pk = request_info['algorithms_sequence_pk']
@@ -420,9 +420,8 @@ class InspectUserRequest(PrepareModelTrain):
             algo_id=self.req_info_algorithm_seq_pk,
             data_id=self.req_info_train_data_id,
             data_type=self.req_info_train_data_type)
-
-        if is_valid != True:
-            if isinstance(is_valid, dict) and is_valid['error_type'] == '4004':
+        if isinstance(is_valid, dict):
+            if is_valid['error_type'] == '4004':
                 return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
                 # file_not_found
             else:
@@ -431,27 +430,20 @@ class InspectUserRequest(PrepareModelTrain):
 
         # model_parameters 검사 (4012/4013)
         is_valid = self._check_model_parameters(model_param_dict=self.req_info_model_param)
-
-        if is_valid != True:
-            if isinstance(is_valid, dict) and is_valid['error_type'] == '4102':
-                return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
-                # invalid model parameter name
-
-            elif isinstance(is_valid, dict) and is_valid['error_type'] == 'model_param_error':
-                return self._error_return_dict('4103', is_valid)
-                # invalid model parmeter values (특정할 수 없는 에러..)
+        if isinstance(is_valid, dict):
+            return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
 
         # train_parameters 검사 (4101/4102)
         is_valid = self._check_train_parameters(train_param_dict=self.req_info_train_param)
-
-        if is_valid != True:
+        if isinstance(is_valid, dict):
             return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
             # invalid train parameter name 또는 'y' not found
 
         # 요청한 데이터의 변수 타입이 수치형인지 검사 (4022)
         if not super()._inspect_data(data_set=self.train_data):
             logger.error("Train Data's dtype must be numeric not object")
-            return self._error_return_dict('4022', error_msg='Data is not suitable for the algorithm')
+            error_msg = 'Data is not suitable for the algorithm'
+            return self._error_return_dict('4022', error_msg)
         return True
 
     # 모델 중지/재시작/테스트 요청 필수 파라미터 검사하는 함수

@@ -170,10 +170,9 @@ class CustomErrorCode:
 
     def INVALID_MODEL_PARAMETER_4103(self, error_msg):
         logger.error('{}'.format(ERROR_CASE_11))
-        if isinstance(error_msg, dict) and error_msg['error_type'] == 'model_param_error':
-            response = {'type': '4103', 'title': 'Invalid Model Parameter',
-                        'detail': str(error_msg['error_msg'])}
-            return response
+        response = {'type': '4103', 'title': 'Invalid Model Parameter',
+                    'detail': str(error_msg)}
+        return response
 
     def INVALID_PREPROCESS_CONDITION_4104(self, error_msg):
         logger.error('{}'.format(ERROR_CASE_12))
