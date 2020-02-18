@@ -424,9 +424,9 @@ class InspectUserRequest(PrepareModelTrain):
             if is_valid['error_type'] == '4004':
                 return self._error_return_dict(is_valid['error_type'], is_valid['error_msg'])
                 # file_not_found
-            else:
-                raise Http404
-                # algorithm 또는 data ID가 없는 경우 -- resource_not_found
+        elif not is_valid:
+            raise Http404
+            # algorithm 또는 data ID가 없는 경우 -- resource_not_found
 
         # model_parameters 검사 (4012/4013)
         is_valid = self._check_model_parameters(model_param_dict=self.req_info_model_param)

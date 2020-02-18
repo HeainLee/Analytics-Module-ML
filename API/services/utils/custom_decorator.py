@@ -1,3 +1,4 @@
+import time
 import os, sys
 import logging
 import traceback
@@ -13,12 +14,14 @@ def call_deco(func):
         func_script = str(errors[0]).split('FrameSummary file ')[1].split('.')[0].split('/')[-1]
         call_flow = []
         for i in range(len(errors)):
-            if not 'wrapper' in str(errors[i]):
+            if 'wrapper' not in str(errors[i]):
                 call_func_name = str(errors[i]).split('in ')[1].replace('>', '').replace('<', '')
                 call_flow.insert(0, call_func_name)
 
         if func_script == 'train_helper_test':
             log_sub_title = '[TRAIN MODEL FUNC]'
+        else:
+            log_sub_title = '[N/A]'
 
         logger.warning('[@wrapper] {} function "{}" is called by {}' \
                        .format(log_sub_title, func.__name__, call_flow))
@@ -29,7 +32,6 @@ def call_deco(func):
 
 
 def my_timer(func):
-    import time
     @wraps(func)
     def wrapper(*args, **kwargs):
         t1 = time.time()

@@ -10,7 +10,7 @@ import pandas as pd
 from ast import literal_eval 
 from django.shortcuts import get_object_or_404
 
-from ..data_preprocess.preprocess_helper import drop_columns
+from ..data_preprocess.preprocess_base import drop_columns
 from ...models.preprocessed_data import PreprocessedData
 from ...serializers.serializers import PreprocessedDataSerializer
 from ...config.result_path_config import PATH_CONFIG

@@ -8,7 +8,7 @@ import pandas as pd
 from ast import literal_eval
 from django.conf import settings
 
-from ..data_preprocess.preprocess_helper import drop_columns
+from ..data_preprocess.preprocess_base import drop_columns
 
 logger = logging.getLogger('collect_log_helper')
 

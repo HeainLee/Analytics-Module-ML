@@ -20,7 +20,8 @@ from smartcity.celery import app
 
 from ...serializers.serializers import PreprocessedDataSerializer
 from ...models.preprocessed_data import PreprocessedData
-from .preprocess_helper import PreprocessTask, DataSummary
+from .preprocess_helper import PreprocessTask
+from .data_summary import DataSummary
 
 logger = logging.getLogger('collect_log_task')
 

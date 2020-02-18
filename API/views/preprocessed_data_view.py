@@ -16,7 +16,7 @@ from ..models.preprocess_functions import PreprocessFunction
 from ..models.preprocessed_data import PreprocessedData
 from ..serializers.serializers import PreprocessedDataSerializer
 from ..services.data_preprocess import tasks
-from ..services.data_preprocess.preprocess_helper import CreatePreprocessedData
+from ..services.data_preprocess.preprocess_helper import InspectUserRequest
 from ..services.utils.custom_response import CustomErrorCode
 from ..config.result_path_config import PATH_CONFIG
 
@@ -25,23 +25,18 @@ error_code = CustomErrorCode()
 
 
 class PreprocessedDataView(APIView):
-    def post(self, request):  # 실제 전처리 수행은 celery task로 전달
+    def post(self, request):
         user_request = request.data
-        create_data = CreatePreprocessedData()
+        get_inspect_result = InspectUserRequest()
 
-        check_result = create_data.check_request_body_preprocessed_post(
-            request_info=user_request)
-        if not check_result:
+        check_result = get_inspect_result.check_post_mode(request_info=user_request)
+        print(check_result)
+        if isinstance(check_result, dict):
             error_type = check_result['error_type']
             error_msg = check_result['error_msg']
             if error_type == '4004':
-                if error_msg.split(',')[1] == 'original_data':
-                    get_object_or_404(OriginalData, pk=error_msg.split(',')[0])
-                elif error_msg.split(',')[1] == 'preprocess_function':
-                    get_object_or_404(PreprocessFunction, pk=error_msg.split(',')[0])
-                elif error_msg.split(',')[1] == 'file_not_found':
-                    return Response(error_code.FILE_NOT_FOUND_4004(path_info=error_msg.split(',')[0]),
-                                    status=status.HTTP_404_NOT_FOUND)
+                return Response(error_code.FILE_NOT_FOUND_4004(path_info=error_msg),
+                                status=status.HTTP_404_NOT_FOUND)
             elif error_type == '4101':
                 return Response(error_code.MANDATORY_PARAMETER_MISSING_4101(error_msg),
                                 status=status.HTTP_400_BAD_REQUEST)
@@ -56,14 +51,14 @@ class PreprocessedDataView(APIView):
             get_pk_new = 1
 
         result = tasks.transformer_fit.apply_async(
-            args=[create_data.data_saved_path, user_request, get_pk_new])
+            args=[get_inspect_result.data_saved_path, user_request, get_pk_new])
         logger.info('요청 ID [{}]의 전처리 작업을 시작합니다'.format(get_pk_new))
         info_save = dict(
             COMMAND=str(request.data),
             PROGRESS_STATE='ongoing',
             PROGRESS_START_DATETIME=datetime.datetime.now(),
             COLUMNS='N/A', STATISTICS='N/A', SAMPLE_DATA='N/A', AMOUNT=0,
-            ORIGINAL_DATA_SEQUENCE_FK1=create_data.original_data_pk,
+            ORIGINAL_DATA_SEQUENCE_FK1=get_inspect_result.original_data_pk,
         )
 
         serializer = PreprocessedDataSerializer(data=info_save)
@@ -86,35 +81,31 @@ class PreprocessedDataDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
-        # DELETE_FLAG == True로 전환하고, 저장된 파일 삭제 (db의 instance는 삭제하지 않음)
-        # 이미 DELETE_FLAG가 True인 경우, Conflict(4009) 에러 반환
+        # DELETE_FLAG == True 전환하고, 저장된 파일 삭제 (db의 instance 삭제하지 않음)
+        # 이미 DELETE_FLAG 가 True 경우, Conflict(4009) 에러 반환
         preprocessed_data = get_object_or_404(PreprocessedData, pk=pk)
         serializer = PreprocessedDataSerializer(preprocessed_data)
         if serializer.data['DELETE_FLAG']:
             return Response(error_code.CONFLICT_4009(mode='DELETE', error_msg='deleted'),
                             status=status.HTTP_409_CONFLICT)
         else:
-            # 'result/preprocessed_data'
-            data_saved_path = PATH_CONFIG.PREPROCESSED_DATA
-            # 'result/preprocess_transformer '
-            transformer_saved_path = PATH_CONFIG.PREPROCESS_TRANSFORMER
-            # 전처리된 데이터 저장 경로
-            remove_file_path = os.path.join(data_saved_path, serializer.data['FILENAME'])
             # 데이터 전처리에 사용했던 기능들 저장 경로
-            remove_transformer_list = glob.glob('{}/T_{}_*.pickle'. \
-                                                format(transformer_saved_path, pk))
-            if os.path.isfile(remove_file_path):
-                os.remove(remove_file_path)  # 전처리된 데이터 파일 삭제
-                for transformer_file in remove_transformer_list:  # 전처리에 사용된 전처리기 삭제
+            transformer_list = glob.glob('result/preprocess_transformer/T_{}_*.pickle'.format( pk))
+            if os.path.isfile(serializer.data['FILEPATH']):
+                os.remove(serializer.data['FILEPATH'])
+                # 전처리된 데이터 파일 삭제
+                for transformer_file in transformer_list:
                     os.remove(transformer_file)
+                    # 전처리에 사용된 전처리기 삭제
                 serializer = PreprocessedDataSerializer(
                     preprocessed_data, data=dict(DELETE_FLAG=True), partial=True)
                 if serializer.is_valid():
                     serializer.save()
                     return Response(serializer.data, status=status.HTTP_200_OK)
             else:
-                return Response(error_code.FILE_NOT_FOUND_4004(path_info=remove_file_path),
-                                status=status.HTTP_404_NOT_FOUND)
+                return Response(error_code.FILE_NOT_FOUND_4004(
+                    path_info=serializer.data['FILEPATH']),
+                    status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['GET'])

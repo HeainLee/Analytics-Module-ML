@@ -177,8 +177,8 @@ class CustomErrorCode:
     def INVALID_PREPROCESS_CONDITION_4104(self, error_msg):
         logger.error('{}'.format(ERROR_CASE_12))
         response = {'type': '4104', 'title': 'Invalid Preprocess Condition',
-                    'detail': "Cannot apply field name '{}' with function '{}' [System Message Detail : {}]".\
-                    format(error_msg.split(',')[0], error_msg.split(',')[1], error_msg.split(',')[2])}
+                    'detail': f"Cannot apply field name '{error_msg[0]}' with function '{error_msg[1]}'"
+                              f" [System Message Detail : {error_msg[2]}]"}
         return response
 
     def RESOURCE_NOT_INITIATED_4051(self, error_msg):

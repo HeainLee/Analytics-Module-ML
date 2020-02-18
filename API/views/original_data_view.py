@@ -9,9 +9,9 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
 from ..models.original_data import OriginalData
-from ..models.preprocess_functions import PreprocessFunction
 from ..serializers.serializers import OriginalDataSerializer
-from ..services.data_preprocess.preprocess_helper import DataSummary, TestPreprocess
+from ..services.data_preprocess.preprocess_tester import TestPreprocessor
+from ..services.data_preprocess.data_summary import DataSummary
 from ..services.utils.custom_response import CustomErrorCode
 from ..config.result_path_config import PATH_CONFIG
 
@@ -21,8 +21,10 @@ error_code = CustomErrorCode()
 
 class OriginalDataView(APIView):
     def post(self, request):
-        base_directory = settings.NIFI_RESULT_DIRECTORY  # /home/centos/NIFI_RESULT
+        base_directory = 'C:/Users/Daumsoft/GITHUB_temp_project/_data_folder'
+        # base_directory = settings.NIFI_RESULT_DIRECTORY  # /home/centos/NIFI_RESULT
         data_save_path = PATH_CONFIG.ORIGINAL_DATA_DIRECTORY  # 'result/original_data'
+
         if 'data_path' not in request.data.keys():
             return Response(error_code.MANDATORY_PARAMETER_MISSING_4101(error_msg='data_path'),
                             status=status.HTTP_400_BAD_REQUEST)
@@ -76,54 +78,51 @@ class OriginalDataDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, pk):
-        # 지정한 원본데이터에 요청한 전처리를 수행하고 json으로 넘겨줌
+        # 지정한 원본데이터에 요청한 전처리를 수행하고 json 으로 넘겨줌
+        user_request = request.data  # dict
         origin_data = get_object_or_404(OriginalData, pk=pk)
         serializer = OriginalDataSerializer(origin_data).data
         data_path = serializer['FILEPATH']
+
         if not os.path.isfile(data_path):
             logger.error('{} 경로가 존재하지 않습니다'.format(data_path))
             return Response(error_code.FILE_NOT_FOUND_4004(path_info=data_path))
 
-        test_preprocess = TestPreprocess()
-        user_request_data = test_preprocess.load_data(file_name=os.path.split(data_path)[1])
+        test_preprocessor = TestPreprocessor(file_name=os.path.split(data_path)[1], pk=pk)
+        check_result = test_preprocessor.check_request_body_original_patch(
+            request_info=user_request)
 
-        check_result = test_preprocess.check_request_body_original_patch(
-            request_info=request.data, request_data=user_request_data, pk=pk)
-        if not check_result:
+        if isinstance(check_result, dict):
             error_type = check_result['error_type']
             error_msg = check_result['error_msg']
-            if error_type == '4004':
-                get_object_or_404(PreprocessFunction, pk=error_msg)
+            if error_type == '4101':
+                return Response(error_code.MANDATORY_PARAMETER_MISSING_4101(error_msg),
+                                status=status.HTTP_400_BAD_REQUEST)
             elif error_type == '4102':
                 return Response(error_code.INVALID_PARAMETER_TYPE_4102(error_msg),
-                                status=status.HTTP_400_BAD_REQUEST)
-            elif error_type == '4101':
-                return Response(error_code.MANDATORY_PARAMETER_MISSING_4101(error_msg),
                                 status=status.HTTP_400_BAD_REQUEST)
 
         # 전처리 테스트 수행 (요청을 하나씩 처리해서 한꺼번에 결과 반환)
         logger.info('요청 ID [{}]의 전처리 테스트를 시작합니다'.format(pk))
-        RESULT_LIST = test_preprocess.test_result(
-            data=user_request_data, user_request_dict=request.data['request_test'], pk=pk)
+        preprocessed_test_result = test_preprocessor.test_result(
+            request_info=user_request)
 
-        # {"error_name":"PreprocessTestError", "error_detail":field_name+','+transformer_name}
-        ## 전처리 기능 fit/transform하는 도중 발생한 에러(test_transformer)
-        if type(RESULT_LIST) == dict and 'error_name' in RESULT_LIST.keys():
-            if RESULT_LIST['error_name'] == 'PreprocessTestError':
-                return Response(error_code.INVALID_PREPROCESS_CONDITION_4104(
-                    error_msg=RESULT_LIST['error_detail']),
-                    status=status.HTTP_400_BAD_REQUEST)
-            elif RESULT_LIST['error_name'] == 'ParameterSyntaxError':
-                return Response(error_code.INVALID_PARAMETER_TYPE_4102(
-                    error_msg=RESULT_LIST['error_detail']),
-                    status=status.HTTP_400_BAD_REQUEST)
+        if isinstance(preprocessed_test_result, dict):
+            error_type = preprocessed_test_result['error_type']
+            error_msg = preprocessed_test_result['error_msg']
+            if error_type == '4102':  # ParameterSyntaxError
+                return Response(error_code.INVALID_PARAMETER_TYPE_4102(error_msg),
+                                status=status.HTTP_400_BAD_REQUEST)
+            elif error_type == '4104':  # PreprocessorTestError
+                return Response(error_code.INVALID_PREPROCESS_CONDITION_4104(error_msg),
+                                status=status.HTTP_400_BAD_REQUEST)
 
         logger.info('요청 ID [{}]의 전처리 테스트가 완료되었습니다'.format(pk))
-        return Response(RESULT_LIST, status=status.HTTP_200_OK)
+        return Response(preprocessed_test_result, status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
-        # DELETE_FLAG == True로 전환하고, 저장된 파일 삭제 (db의 instance는 삭제하지 않음)
-        # 이미 DELETE_FLAG가 True인 경우, Conflict(4009) 에러 반환
+        # DELETE_FLAG == True 전환하고, 저장된 파일 삭제 (db의 instance 삭제하지 않음)
+        # 이미 DELETE_FLAG 가 True 경우, Conflict(4009) 에러 반환
         origin_data = get_object_or_404(OriginalData, pk=pk)
         serializer = OriginalDataSerializer(origin_data)
         if serializer.data['DELETE_FLAG']:
