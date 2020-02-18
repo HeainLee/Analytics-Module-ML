@@ -1,18 +1,15 @@
-*.pyc
-*~
-*/__pycache__/
-__pycache__/
-myvenv
-db.sqlite3
-/static
-.DS_Store
-/tmp_files
-/data_folder
-/API/migrations
 .idea
-/smartcity/settings.py
+/API/migrations
+
+# 로컬 개발 관련 폴더
+/result
+/_data_folder
+
+# 디폴트 스크립트
 /smartcity/wsgi.py
 /manage.py
 
-/result
-/_data_folder
+# 파이썬 .pyc파일
+*/__pycache__/
+*.pyc
+
