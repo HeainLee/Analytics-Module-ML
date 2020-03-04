@@ -4,6 +4,8 @@
 # 로컬 개발 관련 폴더
 /result
 /_data_folder
+/_nfs_fake_path
+/_others
 
 # 디폴트 스크립트
 /smartcity/wsgi.py

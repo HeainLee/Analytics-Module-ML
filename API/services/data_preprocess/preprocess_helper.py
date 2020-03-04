@@ -1,12 +1,12 @@
 import os
-import joblib
 import logging
 import warnings
 import numpy as np
 import pandas as pd
 from django.http import Http404
 
-from .preprocess_base import PreprocessorBase, drop_columns
+from .data_summary import DataSummary
+from .preprocess_base import PreprocessorBase
 from ..utils.custom_decorator import where_exception
 from ...models.original_data import OriginalData
 from ...models.preprocess_functions import PreprocessFunction
@@ -14,13 +14,11 @@ from ...serializers.serializers import OriginalDataSerializer
 from ...serializers.serializers import PreprocessFunctionSerializer
 from ...config.result_path_config import PATH_CONFIG
 
-warnings.filterwarnings('ignore')
-logger = logging.getLogger('collect_log_helper')
+warnings.filterwarnings("ignore")
+logger = logging.getLogger("collect_log_helper")
 
 PREPROCESSED_DATA_DIR = PATH_CONFIG.PREPROCESSED_DATA
 # 'result/preprocessed_data'
-PREPROCESS_TRANSFORMER_DIR = PATH_CONFIG.PREPROCESS_TRANSFORMER
-# 'result/preprocess_transformer '
 
 
 def _error_return_dict(error_type, error_msg):
@@ -45,16 +43,20 @@ class InspectUserRequest(PreprocessorBase):
 
         Attributes:
         -----------
+        _key_data_pk (str) : shortcut of 'original_data_sequence_pk'
+        _key_func_pk (str) : 'shortcut of preprocess_functions_sequence_pk'
         original_data_pk (int) : user requested ID of original Data
-        data_saved_path (str) : original data's saved path
-                                (eg. ['FILEPATH'] from query)
+        data_saved_path (str) : original data's saved path (eg. ['FILEPATH'] from query)
+        pfunction_ids (list) : list of all '_key_func_pk' from user request
         data_loaded (pandas.DataFrame) : user requested Data for Preprocessing
-
     """
 
     def __init__(self):
-        self.original_data_pk = None
+        self._key_data_pk = "original_data_sequence_pk"
+        self._key_func_pk = "preprocess_functions_sequence_pk"
+        self.original_data_id = None
         self.data_saved_path = None
+        self.pfunction_ids = None
         self.data_loaded = None
 
     @staticmethod
@@ -64,287 +66,439 @@ class InspectUserRequest(PreprocessorBase):
 
             Parameters:
             -----------
-                 element (dict) : raw request information from user's request body
+                 element (dict) :
+                 raw request information from user's request body
 
             Returns:
             --------
-                 True (bool) : True, if all mandatory keys is satisfied
+                 True (bool) :
+                 True, if all mandatory keys is satisfied
                  or
-                 _key (str) : omitted key (induce 4101)
+                 _key (str) :
+                 omitted key (induce 4101)
         """
-        mand_key_level_one = ['original_data_sequence_pk', 'request_data']
-        mand_key_level_two = ['preprocess_functions_sequence_pk', 'field_name']
+        mand_key_level_one = ["original_data_sequence_pk", "request_data"]
+        mand_key_level_two = ["preprocess_functions_sequence_pk", "field_name"]
         if list(element.keys()) != mand_key_level_one:
             _key = set(mand_key_level_one).difference(list(element.keys()))
-            return ''.join(_key)
+            return "".join(_key)
         else:
-            for request_info_dict in element['request_data']:
+            for request_info_dict in element["request_data"]:
                 for _key in mand_key_level_two:
                     if _key not in request_info_dict.keys():
                         return _key
         return True
 
-    def _check_request_pk(self, data_id, func_id):
-        return True
+    def _check_request_pk(self):
+        """
+        Check IDs of original data and preprocess function (valid DB)
 
-    # 전처리 데이터 생성 요청에 대한 요청 파라미터 검사하는 함수
-    def check_post_mode(self, request_info):
+        check self.original_data_id & self.pfunction_ids
+        new value to self.data_loaded & self.data_saved_path is added
+        if True is returned
 
-        logger.warning('[데이터 전처리] Check Request Info')
+            Returns:
+            --------
+                 True (bool) : if all IDs are valid
+                 or
+                 _error_return_dict (dict) :
+                 if self.data_saved_path not valid
 
-        # 필수 파라미터 검사 (4101)
-        is_keys = self._mandatory_key_exists_preprocessed_post(
-            element=request_info)
-        if isinstance(is_keys, str):  # mandatory key name (str)
-            return _error_return_dict('4101', is_keys)
-
-        # 요청한 원본데이터 있는지 검사 (Http404/4004)
-        self.original_data_pk = request_info['original_data_sequence_pk']
-        all_origin_id = list(OriginalData.objects.all().values_list(
-            'ORIGINAL_DATA_SEQUENCE_PK', flat=True))
-        if not int(self.original_data_pk) in all_origin_id:
+            Raises:
+            -------
+                Http404 (django Exception) :
+                if IDs are not valid
+        """
+        all_origin_id = list(
+            OriginalData.objects.all().values_list(
+                "ORIGINAL_DATA_SEQUENCE_PK", flat=True
+            )
+        )
+        if not int(self.original_data_id) in all_origin_id:
+            logger.error(f"{self._key_data_pk}가 잘못 요청되었습니다")
             raise Http404
         else:
             self.data_saved_path = OriginalDataSerializer(
-                OriginalData.objects.get(pk=self.original_data_pk)).data['FILEPATH']
+                OriginalData.objects.get(pk=self.original_data_id)
+            ).data["FILEPATH"]
 
             if not os.path.isfile(self.data_saved_path):
-                logger.error('{} 경로가 존재하지 않습니다'.format(self.data_saved_path))
-                return _error_return_dict('4004', self.data_saved_path)
+                logger.error(f"{self.data_saved_path} 경로가 존재하지 않습니다")
+                return _error_return_dict("4004", self.data_saved_path)
             else:
-                self.data_loaded = super().load_data(
-                    file_name=os.path.split(self.data_saved_path)[1])
+                self.data_loaded = super()._load_data(
+                    base_path="ORIGINAL_DATA_DIR",
+                    file_name=os.path.split(self.data_saved_path)[1],
+                )
+        all_pfunc_id = list(
+            PreprocessFunction.objects.all().values_list(
+                "PREPROCESS_FUNCTIONS_SEQUENCE_PK", flat=True
+            )
+        )
+        is_ids = [True if i in all_pfunc_id else False for i in self.pfunction_ids]
+        if not all(is_ids):
+            logger.error(f"{self._key_func_pk}가 잘못 요청되었습니다")
+            raise Http404
+        return True
 
-        request_info_list = request_info['request_data']
-        for request_info_dict in request_info_list:
-            # 요청한 전처리기능이 있는지 검사 (Http404)
-            pfunc_id = request_info_dict['preprocess_functions_sequence_pk']
-            all_pfunc_id = list(PreprocessFunction.objects.all().values_list(
-                'PREPROCESS_FUNCTIONS_SEQUENCE_PK', flat=True))
-            if not int(pfunc_id) in all_pfunc_id:
-                raise Http404
+    def check_post_mode(self, request_info):
+        """
+        Checking whether 'request_info' is valid
 
-            # 요청한 필드명이 원본 데이터에 있는지(4102)
-            field_name = request_info_dict['field_name']
-            for field_name_ in field_name.replace(" ", "").split(','):
-                if not field_name_ in list(self.data_loaded.columns):
-                    return _error_return_dict('4102', field_name_)
+            Parameters:
+            -----------
+                 request_info (dict) :
+                 request information from user's request body
+
+            Returns:
+            --------
+                 True (bool) : if valid
+                 or
+                 _error_return_dict (dict) :
+                 specific error info to induce custom error
+        """
+        logger.warning("[데이터 전처리] Check Request Info")
+        # 필수 파라미터 검사 (4101)
+        is_keys = self._mandatory_key_exists_preprocessed_post(element=request_info)
+        if isinstance(is_keys, str):  # mandatory key name (str)
+            return _error_return_dict("4101", is_keys)
+        request_all = request_info["request_data"]
+        self.original_data_id = request_info[self._key_data_pk]
+        self.pfunction_ids = list(map(int, [i[self._key_func_pk] for i in request_all]))
+
+        # 요청한 원본데이터 ID와 전처리 ID가 있는지 검사 (Http404/4004)
+        is_valid = self._check_request_pk()
+        if isinstance(is_valid, dict):
+            return _error_return_dict(is_valid["error_type"], is_valid["error_msg"])
+            # file_not_found
+        # 요청한 필드명이 원본 데이터에 있는지 (4102)
+        for request_info_dict in request_all:
+            field_name = request_info_dict["field_name"]
+            for field_name_ in field_name.replace(" ", "").split(","):
+                if field_name_ not in list(self.data_loaded.columns):
+                    return _error_return_dict("4102", field_name_)
         return True  # 에러 상태가 없으면 True
 
 
-class PreprocessTask(InspectUserRequest):
+class PreprocessTask(PreprocessorBase):
+    """
+    Return data preprocessing result
+
+        Attributes:
+        -----------
+            pk (int) : PREPROCESSED_DATA_SEQUENCE_PK
+            func_query (dict) : preprocess function query info
+                                (eg. PreprocessFunctionSerializer)
+            file_path (str) : preprocessed data saved path
+                              (eg. os.path.join(PREPROCESSED_DATA_DIR, file_name))
+            file_name (str) : file name of preprocessed data
+                              (eg. 'P_{}.json'.format(self.pk))
+            real_final_list (list) : which saved as 'SUMMARY' in PreprocessedData DB
+                (eg. info_dict = {"field_name":field_name, "function_name":pfunc_name,
+                                  "function_pk":pfunc_pk, "file_name":file_name,
+                                  "original_classes":None, "encoded_classes":None})
+    """
 
     def __init__(self):
-        self.get_pfunc = None
+        self.pk = None
+        self.func_query = None
+        self.file_path = None
+        self.file_name = None
+        self.real_final_list = []
 
-    # 전처리된 데이터를(pandas.DataFrame)을 json을 변환하여 저장하는 함수
-    def save_preprocessed_data(self, preprocessed_data, preprocessed_data_name):
-        file_path = os.path.join(PREPROCESSED_DATA_DIR, preprocessed_data_name)
-        preprocessed_data.to_json(file_path, orient='index')
-        # orient 옵션에 따라 저장되는 형태 달라짐 / index = dict like {index -> {column -> value}}
-        return file_path, preprocessed_data_name
+    def _save_prep_data(self, prep_data, file_name):
+        """
+        Save preprocessed Data as json
 
-    # 변환기를 저장하는 함수
-    def _save_transformer(self, transformer, transformer_name):
-        file_path = os.path.join(PREPROCESS_TRANSFORMER_DIR, transformer_name)
-        joblib.dump(transformer, file_path)
-        return file_path, transformer_name
+            Parameters:
+            -----------
+                 prep_data (pandas.DataFrame) :
+                 preprocessed data after all preprocessing finished
+                 file_name (str) :
+                 saved name of preprocessed data
+                 (eg. 'P_{}.json'.format(self.pk))
 
-    # 학습용으로 사용될 데이터에 전처리를 수행하고 결과를 리턴하는 함수(_task_general_preprocess 함수에서 사용됨)
-    ## 변환기를 학습데이터로 학습하고(fit) 전처리 적용하고(transform) 데이터에 덮어씌우는(changed_field) 과정
-    ### (**전처리 방법의 동작방식에 따라 조건문 추가될 수 있음)
-    def _train_data_transformer(self, data, field_name, transformer):
+            Returns:
+            --------
+                 (save 'prep_data' to PREPROCESSED_DATA_DIR)
+                 (append new value to self.file_path)
+        """
+        self.file_path = os.path.join(PREPROCESSED_DATA_DIR, file_name)
+        prep_data.to_json(self.file_path, orient="index")
+
+    # TODO 전처리 방법의 동작방식에 따라 조건문
+    def _train_data_transformer(self, data, field_name, processor):
+        """
+        Making 'changed_field' using 'field_name' with 'processor'
+        and Overwriting 'data' from original 'field_column' to 'changed_field'
+        and Return 'data' (used by the related function `_task_result`)
+
+            Parameters:
+            -----------
+                 data (pandas.DataFrame) :
+                 preprocessed data in progress
+                 field_name (str) : one of the column name
+                 processor (object) :
+                 preprocessor from scikit-learn library
+
+            Returns:
+            --------
+                 data (pandas.DataFrame) :
+                 preprocessed data in progress
+                 processor (object) :
+                 preprocessor after `fit` and `transform`
+                 encoded_info (dict) :
+                 saving original and encoded classes or categories
+        """
+        encoded_info = dict()
+        trans_name = type(processor).__name__
+
         try:
             field_column = data[field_name].astype(float)
-        except:
+        except ValueError:
             field_column = data[field_name]
-        try:
-            transformer.fit(field_column.values.reshape(-1, 1))
-            changed_field = transformer.transform(field_column.values.reshape(-1, 1))
-
-            # 변환기 정보를 딕셔너리로 저장하는 과정
-            transformer_info = dict(function_name=type(transformer).__name__)
-
-            # transfrom된 데이터와 원본 데이터 통합
-            if type(transformer).__name__ == 'OneHotEncoder':
-                # 원핫인코딩을 한 경우 통합 방법(새로운 칼럼 생성됨)
-                changed_field = changed_field.toarray() \
-                    if not isinstance(changed_field, np.ndarray) else changed_field
-                OneHot = pd.DataFrame(
-                    changed_field, columns=[field_name + "_" + str(int(i)) \
-                                            for i in range(changed_field.shape[1])])
-                data = pd.concat([data, OneHot], axis=1, sort=False)
-                data = data.drop(field_name, axis=1)
-                transformer_info['original_classes'] = list(transformer.categories_[0])
-                encoded_class = transformer.transform(np.array(transformer.categories_).reshape(-1, 1))
-                encoded_class = encoded_class.toarray() \
-                    if not isinstance(encoded_class, np.ndarray) else encoded_class
-                transformer_info['encoded_classes'] = encoded_class.tolist()
-
-            elif type(transformer).__name__ == 'MultiLabelBinarizer':
-                # MultiLabelBinarizer 경우 통합 방법(새로운 칼럼 생성됨)
-                changed_field = changed_field.toarray() \
-                    if not isinstance(changed_field, np.ndarray) else changed_field
-                OneHot = pd.DataFrame(
-                    changed_field, columns=[field_name + "_" + str(int(i)) \
-                                            for i in range(changed_field.shape[1])])
-                data = pd.concat([data, OneHot], axis=1, sort=False)
-                data = data.drop(field_name, axis=1)
-                transformer_info['original_classes'] = list(transformer.classes_)
-                encoded_class = transformer.transform(np.array(transformer.classes_).reshape(-1, 1))
-                encoded_class = encoded_class.toarray() \
-                    if not isinstance(encoded_class, np.ndarray) else encoded_class
-                transformer_info['encoded_classes'] = encoded_class.tolist()
-
-            elif type(transformer).__name__ == 'KBinsDiscretizer':
-                # KBinsDiscretizer인 경우 통합 방법(새로운 칼럼 생성됨)
-                changed_field = changed_field.toarray() \
-                    if not isinstance(changed_field, np.ndarray) else changed_field
-                OneHot = pd.DataFrame(
-                    changed_field, columns=[field_name + "_" + str(int(i)) \
-                                            for i in range(changed_field.shape[1])])
-                data = pd.concat([data, OneHot], axis=1, sort=False)
-                data = data.drop(field_name, axis=1)
-
-            else:  # 원핫인코딩이 또는 kbins구간화 아닌 경우 통합 방법(기존 값을 덮어씀)
-                data[field_name] = changed_field
-                if type(transformer).__name__ == 'LabelEncoder':
-                    transformer_info['original_classes'] = list(transformer.classes_)
-                    transformer_info['encoded_classes'] = list(np.unique(changed_field))
-            return data, transformer, transformer_info
-
         except Exception as e:
-            logger.error('Error Type = {} / Error Message = {}'.format(type(e), e))
+            where_exception(error_msg=e)
+        try:
+            changed_field = processor.fit_transform(field_column.values.reshape(-1, 1))
+            changed_field = super()._to_array(changed_field)
+
+            # transform 된 데이터와 원본 데이터 통합
+            if len(changed_field.shape) == 2 and changed_field.shape[1] == 1:
+                # case 04 : 실제로 작동할 수 없는 전처리 기능 Pass
+                if trans_name == "Normalizer":
+                    logger.warning("Not working in this version!!!")
+                else:  # case 01 : 새로운 칼럼이 추가 되지 않음 + 인코딩 아님 (스케일링 등)
+                    data[field_name] = changed_field
+
+                    # case 02 : 인코딩 필요한 경우
+                    if trans_name == "Binarizer":
+                        encoded_info["origin_class"] = np.unique(field_column).tolist()
+                        encoded_class = processor.transform(
+                            np.unique(field_column).reshape(-1, 1)
+                        )
+                        encoded_info["encode_class"] = encoded_class.tolist()
+                    # case 02 : 인코딩 필요한 경우
+                    elif trans_name == "OrdinalEncoder":
+                        encoded_info["origin_class"] = list(processor.categories_[0])
+                        encoded_class = processor.transform(
+                            processor.categories_[0].reshape(-1, 1)
+                        )
+                        encoded_info["encode_class"] = encoded_class.tolist()
+            # case 02 : 새로운 칼럼이 추가 되지 않음 + 인코딩
+            elif len(changed_field.shape) == 1:  # LabelEncoder
+                encoded_info["origin_class"] = list(processor.classes_)
+                encoded_info["encode_class"] = list(np.unique(changed_field))
+                data[field_name] = changed_field
+            # case 03 : 새로운 칼럼이 추가 됨 + 인코딩
+            else:
+                # KBinsDiscretizer, LabelBinarizer, MultiLabelBinarizer, OneHotEncoder
+                if trans_name == "KBinsDiscretizer":
+                    print(changed_field)
+                    encoded_info["origin_class"] = processor.bin_edges_[0].tolist()
+                    encoded_class = processor.transform(
+                        processor.bin_edges_[0].reshape(-1, 1)
+                    )
+                elif trans_name == "OneHotEncoder":
+                    encoded_info["origin_class"] = list(processor.categories_[0])
+                    encoded_class = processor.transform(
+                        processor.categories_[0].reshape(-1, 1)
+                    )
+                else:
+                    encoded_info["origin_class"] = list(processor.classes_)
+                    encoded_class = processor.transform(
+                        processor.classes_.reshape(-1, 1)
+                    )
+                encoded_info["encode_class"] = super()._to_array(encoded_class).tolist()
+
+                col_name = super()._new_columns(
+                    field_name=field_name, after_fitted=changed_field
+                )
+                new_columns = pd.DataFrame(changed_field, columns=col_name)
+                data = pd.concat([data, new_columns], axis=1, sort=False)
+                data = data.drop(field_name, axis=1)
+            return data, processor, encoded_info
+        except Exception as e:
+            where_exception(error_msg=e)
             return False
 
-    # DropColumns 처리로 해당 열 삭제 후 data과 처리정보(info_list) 반환하는 함수
-    def _task_drop_columns(self, data, field_name, pfunction_pk):
-        logger.info('{} 필드를 데이터에서 제외시킵니다'.format(field_name))
-        info_list = []
-        if len(field_name.split(',')) != 1:
-            for field_name_ in field_name.replace(" ", "").split(','):
-                data = drop_columns(data=data, columns=field_name_)
-                info_dict = dict(
-                    field_name=field_name_,
-                    function_name='DropColumns',
-                    function_pk=pfunction_pk,
-                    file_name=None,
-                    original_classes=None,
-                    encoded_classes=None
-                )
-                info_list.append(info_dict)
+    def _task_drop_columns(self, data, request_dict):
+        """
+        Drop Columns and Return Data without request columns
+
+            Parameters:
+            -----------
+                 data (pandas.DataFrame) :
+                 preprocessed data in progress
+                 request_dict (dict) :
+                 single request info from user's request body
+
+            Returns:
+            --------
+                 data (pandas.DataFrame):
+                 pandas DataFrame without 'field_name'
+                 (append new value to self.real_final_list)
+        """
+        field_name = request_dict["field_name"]
+        pfunc_pk = request_dict["preprocess_functions_sequence_pk"]
+
+        if len(field_name.split(",")) != 1:
+            field_name_list = field_name.replace(" ", "").split(",")
         else:
-            data = drop_columns(data=data, columns=field_name)
-            info_dict = dict(
-                field_name=field_name,
-                function_name='DropColumns',
-                function_pk=pfunction_pk,
+            field_name_list = [field_name]
+        for single_field_name in field_name_list:
+            data = super()._drop_columns(data=data, columns=single_field_name)
+            single_result = dict(
+                field_name=single_field_name,
+                function_name="DropColumns",
+                function_pk=pfunc_pk,
                 file_name=None,
                 original_classes=None,
-                encoded_classes=None
+                encoded_classes=None,
             )
-            info_list.append(info_dict)
-        return data, info_list
 
-    # 사이킷런 전처리의 실제 수행된 결과인 data와 처리정보(info_list) 반환하는 함수
-    def _task_general_preprocess(self, data, request_dict, pk, incremental_N):
-        info_list = []
-        field_name = request_dict['field_name']
-        pfunction_pk = request_dict['preprocess_functions_sequence_pk']
-        pfun_name = self.get_pfunc['PREPROCESS_FUNCTIONS_NAME']
-        transformer = super()._get_transformer(params=self.get_pfunc)
+            self.real_final_list.append(single_result)
+        return data
 
-        if 'condition' in request_dict.keys():  # 파라미터 수정을 요청한 경우
-            request_condition = request_dict['condition']
+    def _task_result(self, data, request_dict, save_n):
+        """
+        Preparation for calling `_train_data_transformer` and `_save_transformer`
+        according to 'request_dict'
+
+            Parameters:
+            -----------
+                 data (pandas.DataFrame) :
+                 preprocessed data in progress
+                 request_dict (dict) :
+                 single request info from user's request body
+                 save_n (int) :
+                 incremental Num for naming pickle file of transformer
+
+            Returns:
+            --------
+                 data (pandas.DataFrame):
+                 pandas DataFrame without 'field_name'
+                 save_n (int) :
+                 incremental Num for naming pickle file of transformer
+        """
+        field_name = request_dict["field_name"]
+        pfunc_pk = request_dict["preprocess_functions_sequence_pk"]
+        pfunc_name = self.func_query["PREPROCESS_FUNCTIONS_NAME"]
+
+        transformer = super()._get_base_object(params=self.func_query)
+
+        if "condition" in request_dict.keys():  # 파라미터 수정을 요청한 경우
+            request_condition = request_dict["condition"]
+
             transformer = super()._change_transformer_params(
-                transformer=transformer, params_dict=request_condition)
-            logger.info('{} 전처리 기능의 변경된 파라미터 {} 가 적용됩니다' \
-                        .format(pfun_name, transformer.get_params()))
-        else:
-            logger.info('{} 전처리 기능의 기본 파라미터 {} 가 적용됩니다' \
-                        .format(pfun_name, transformer.get_params()))
-
-        if len(field_name.split(',')) != 1:  # 전처리 요청한 필드 개수가 2개 이상인 경우
-            field_names = field_name.replace(" ", "").split(',')
-            for field_name_ in field_names:
-                field_name_ = field_name_.strip()
-                logger.info('{} 필드에 {} 전처리 수행을 요청했습니다' \
-                            .format(field_name_, pfun_name))
-                data, fitted_transformer, fitted_info = self._train_data_transformer(
-                    data=data, field_name=field_name_, transformer=transformer)
-                incremental_N += 1
-                logger.info('{} 필드에 적용된 {} 전처리기 저장 ===> T_{}_{}.pickle' \
-                            .format(field_name_, pfun_name, pk, incremental_N))
-
-                file_path, file_name = self._save_transformer(
-                    transformer=fitted_transformer,
-                    transformer_name='T_{}_{}.pickle'.format(pk, incremental_N))
-                info_dict = dict(
-                    field_name=field_name_,
-                    function_name=pfun_name,
-                    function_pk=pfunction_pk,
-                    file_name=file_name,
-                    original_classes=None,
-                    encoded_classes=None
-                )
-                if 'original_classes' in fitted_info.keys():
-                    info_dict['original_classes'] = fitted_info['original_classes']
-                    info_dict['encoded_classes'] = fitted_info['encoded_classes']
-
-                info_list.append(info_dict)
-
-        else:  # 전처리 요청한 필드 개수가 1개인 경우
-            logger.info('{} 필드에 {} 전처리 수행을 요청했습니다' \
-                        .format(field_name, pfun_name))
-            data, fitted_transformer, fitted_info = self._train_data_transformer(
-                data=data, field_name=field_name, transformer=transformer)
-            incremental_N += 1
-            logger.info('{} 필드에 적용된 {} 전처리기 저장 ===> T_{}_{}.pickle'. \
-                        format(field_name, pfun_name, pk, incremental_N))
-
-            file_path, file_name = self._save_transformer(
-                transformer=fitted_transformer,
-                transformer_name='T_{}_{}.pickle'.format(pk, incremental_N))
-            info_dict = dict(
-                field_name=field_name,
-                function_name=pfun_name,
-                function_pk=pfunction_pk,
-                file_name=file_name,
-                original_classes=None,
-                encoded_classes=None
+                transformer=transformer, params_dict=request_condition
             )
-            if 'original_classes' in fitted_info.keys():
-                info_dict['original_classes'] = fitted_info['original_classes']
-                info_dict['encoded_classes'] = fitted_info['encoded_classes']
-            info_list.append(info_dict)
+            logger.info(
+                f"{pfunc_name} run with changed parameter {transformer.get_params()}"
+            )
+        else:
+            logger.info(
+                f"{pfunc_name} run with basic parameter {transformer.get_params()}"
+            )
+        if len(field_name.split(",")) != 1:
+            field_name_list = field_name.replace(" ", "").split(",")
+        else:
+            field_name_list = [field_name]
+        for single_field_name in field_name_list:
 
-        return data, info_list, incremental_N
+            data, fitted_transformer, encode_info = self._train_data_transformer(
+                data=data, field_name=single_field_name, processor=transformer
+            )
 
-    # 전처리 데이터 생성 결과(data, preprocessed_data_info_list)를 반환하는 함수
-    def task_result(self, data, user_request_dict, pk):
-        preprocessed_data_info_list = []
-        incremental_N = 0
+            save_n += 1
+            saved_name = "T_{}_{}.pickle".format(self.pk, save_n)
+            logger.info(f'save "{saved_name}" <{pfunc_name} | {single_field_name}> ')
+
+            _ = super()._dump_pickle(
+                save_object=fitted_transformer,
+                base_path="PREPROCESS_TRANSFORMER_DIR",
+                file_name=saved_name,
+            )
+
+            info_dict = dict(
+                field_name=single_field_name,
+                function_name=pfunc_name,
+                function_pk=pfunc_pk,
+                file_name=saved_name,
+                original_classes=None,
+                encoded_classes=None,
+            )
+            if "origin_class" in encode_info.keys():
+                info_dict["original_classes"] = encode_info["origin_class"]
+                info_dict["encoded_classes"] = encode_info["encode_class"]
+            self.real_final_list.append(info_dict)
+        return data, save_n
+
+    def task_result(self, data_path, request_info, pk):
+        """
+        Preparation for calling `_task_drop_columns` and `_task_result`
+        according to 'request_info' and saving preprocessed Data
+
+            Parameters:
+            -----------
+                 data_path (str) :
+                 original data saved path
+                 request_info (dict) :
+                 full request info from user's request body
+                 pk (int) :
+                 current PreprocessedData ID
+
+            Returns:
+            --------
+                 final_result (dict):
+                 final return value of user's requested
+        """
+        self.pk = pk
+        self.file_name = "P_{}.json".format(self.pk)
+
+        user_request_dict = request_info["request_data"]
+        data = super()._load_data(
+            base_path="ORIGINAL_DATA_DIR", file_name=os.path.split(data_path)[1]
+        )
+
+        save_N = 0
 
         try:
             for get_request_dict in user_request_dict:
-                field_name = get_request_dict['field_name']
-                pfunction_pk = get_request_dict['preprocess_functions_sequence_pk']
+                """
+                {'preprocess_functions_sequence_pk': 8, 'field_name': 'temp'}
+                {'preprocess_functions_sequence_pk': 10, 'field_name': 'season'}
+                {'preprocess_functions_sequence_pk': 14, 'field_name': 'datetime'}
+                """
+                pfunc_pk = get_request_dict["preprocess_functions_sequence_pk"]
 
-                self.get_pfunc = PreprocessFunctionSerializer(
-                    PreprocessFunction.objects.get(pk=pfunction_pk)).data
+                self.func_query = PreprocessFunctionSerializer(
+                    PreprocessFunction.objects.get(pk=pfunc_pk)
+                ).data
+                func_name = self.func_query["PREPROCESS_FUNCTIONS_NAME"]
 
-                if self.get_pfunc['PREPROCESS_FUNCTIONS_NAME'] == 'DropColumns':
-                    data, info_list = self._task_drop_columns(
-                        data=data, field_name=field_name, pfunction_pk=pfunction_pk)
-                    [preprocessed_data_info_list.append(result) for result in info_list]
-
+                if func_name == "DropColumns":
+                    data = self._task_drop_columns(
+                        data=data, request_dict=get_request_dict
+                    )
                 else:
-                    data, info_list, incremental_N = self._task_general_preprocess(
-                        data=data, request_dict=get_request_dict, pk=pk, incremental_N=incremental_N)
-                    [preprocessed_data_info_list.append(result) for result in info_list]
-            return data, preprocessed_data_info_list
+                    data, save_N = self._task_result(
+                        data=data, request_dict=get_request_dict, save_n=save_N
+                    )
+            self._save_prep_data(prep_data=data, file_name=self.file_name)
+            data_summary = DataSummary(self.file_path)
 
+            final_result = dict(
+                file_path=self.file_path,
+                file_name=self.file_name,
+                summary=self.real_final_list,
+                columns_info=data_summary.columns_info(),
+                amount_info=data_summary.size_info(),
+                sample_data=data_summary.sample_info(),
+                statistics=data_summary.statistics_info(),
+            )
+            return final_result
         except Exception as e:
-            logger.error('전처리 데이터 생성에 실패했습니다')
+            logger.error("전처리 데이터 생성에 실패했습니다")
             where_exception(e)
             return False
